@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>サーバーカメラ配信</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/jsmpeg.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 800px;
+      width: 100%;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 20px;
+    }
+    .video-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background-color: #222;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    #camera-stream {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .status {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .status-text {
+      color: #666;
+      font-size: 14px;
+    }
+    .connected {
+      color: #2a9d8f;
+      font-weight: bold;
+    }
+    .disconnected {
+      color: #e63946;
+      font-weight: bold;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 16px;
+      text-align: center;
+    }
+    .loading {
+      background-color: rgba(66, 135, 245, 0.7);
+    }
+    .error {
+      background-color: rgba(230, 57, 70, 0.7);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>サーバーカメラ配信</h1>
+    <div class="video-container">
+      <div id="loading-overlay" class="overlay loading">サーバーに接続中...</div>
+      <div id="error-overlay" class="overlay error" style="display: none;"></div>
+      <canvas id="camera-stream"></canvas>
+    </div>
+    <div class="status">
+      <div class="status-text">
+        接続状態: <span id="connection-status" class="disconnected">未接続</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const cameraStream = document.getElementById('camera-stream');
+    const connectionStatus = document.getElementById('connection-status');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const errorOverlay = document.getElementById('error-overlay');
+    
+    let player = null;
+
+    // 動画ストリームの設定
+    function setupStream() {
+      try {
+        // 既存のプレーヤーがあれば破棄
+        if (player) {
+          if (typeof player.destroy === 'function') {
+            player.destroy();
+          }
+          player = null;
+        }
+        
+        // 新しいプレーヤーを作成
+        // Basic認証情報をURLに含める
+        const username = 'user';
+        const password = 'InfoNetworking';
+        const auth = btoa(username + ':' + password);
+        const wsUrl = 'ws://localhost:8081/yoursecret?auth=' + auth;
+        
+        player = new JSMpeg.Player(wsUrl, {
+          canvas: cameraStream,
+          autoplay: true,
+          audio: false,
+          loop: false,
+          onVideoDecode: function(decoder, time) {
+            // デコードが成功したら接続状態を更新
+            loadingOverlay.style.display = 'none';
+          },
+          onSourceEstablished: function() {
+            console.log('ソース接続が確立されました');
+            loadingOverlay.style.display = 'none';
+          },
+          onSourceCompleted: function() {
+            console.log('ソースが完了しました');
+          },
+          onError: function(err) {
+            console.error('JSMpeg Error:', err);
+            showError('動画ストリームの読み込みに失敗しました');
+          }
+        });
+      } catch (err) {
+        console.error('プレーヤー初期化エラー:', err);
+        showError('動画プレーヤーの初期化に失敗しました');
+      }
+    }
+    
+    function showError(message) {
+      errorOverlay.textContent = message;
+      errorOverlay.style.display = 'flex';
+      loadingOverlay.style.display = 'none';
+    }
+
+    socket.on('connect', () => {
+      connectionStatus.textContent = '接続中';
+      connectionStatus.className = 'connected';
+      loadingOverlay.style.display = 'none';
+      errorOverlay.style.display = 'none';
+      console.log('サーバーに接続しました');
+      setupStream();
+    });
+
+    socket.on('disconnect', () => {
+      connectionStatus.textContent = '未接続';
+      connectionStatus.className = 'disconnected';
+      loadingOverlay.style.display = 'flex';
+      loadingOverlay.textContent = 'サーバーとの接続が切断されました。再接続を試みています...';
+      console.log('サーバーから切断されました');
+    });
+
+    socket.on('connect_error', (err) => {
+      connectionStatus.textContent = '未接続';
+      connectionStatus.className = 'disconnected';
+      errorOverlay.style.display = 'flex';
+      errorOverlay.textContent = 'サーバーに接続できません。サーバーが起動しているか確認してください。';
+      loadingOverlay.style.display = 'none';
+      console.error('接続エラー:', err);
+    });
+
+    // ストリーミング開始通知を受けたらストリームの表示を更新
+    socket.on('stream-started', (data) => {
+      console.log('ストリーミングが開始されました:', data);
+      setupStream();
+    });
+  </script>
+</body>
+</html> 
