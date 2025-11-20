@@ -70,7 +70,13 @@ let streamActive = false;
 let mjpegReqCount = 0;
 let wsServer = null;
 let streamHttpServer = null;
-let currentVideoDevice = config.defaultCamera; // デフォルトのカメラデバイス
+const mainVideoDevice = config.defaultCamera; // メインカメラデバイス
+
+// 3つ目のカメラ用の変数
+let thirdFfmpegProcess = null;
+let thirdWsServer = null;
+let thirdStreamHttpServer = null;
+const thirdVideoDevice = '/dev/video0'; // 3つ目のカメラデバイス
 
 // FFmpegを使った動画ストリーミングの開始
 function startVideoStream() {
@@ -116,10 +122,11 @@ function stopVideoStream() {
   console.log('カメラストリーミングを停止します...');
   streamActive = false;
 
+  // メインカメラのFFmpegを停止
   if (ffmpegProcess) {
-    console.log('FFmpegプロセスを終了します...');
+    console.log('メインFFmpegプロセスを終了します...');
     try {
-      ffmpegProcess.stdin.write('q');  // FFmpegに終了信号を送る
+      ffmpegProcess.stdin.write('q');
       setTimeout(() => {
         if (ffmpegProcess) {
           ffmpegProcess.kill('SIGTERM');
@@ -131,48 +138,37 @@ function stopVideoStream() {
         }
       }, 500);
     } catch (err) {
-      console.error('FFmpeg終了エラー:', err);
+      console.error('メインFFmpeg終了エラー:', err);
       if (ffmpegProcess) {
         ffmpegProcess.kill('SIGKILL');
       }
     }
     ffmpegProcess = null;
   }
-}
 
-// カメラデバイスを切り替える関数
-function switchVideoDevice(newDevice) {
-  console.log(`カメラデバイスを ${currentVideoDevice} から ${newDevice} に切り替えます...`);
-
-  const wasActive = streamActive;
-
-  // 現在のストリームを停止
-  if (ffmpegProcess) {
+  // 3つ目のカメラのFFmpegを停止
+  if (thirdFfmpegProcess) {
+    console.log('3つ目FFmpegプロセスを終了します...');
     try {
-      ffmpegProcess.kill('SIGTERM');
+      thirdFfmpegProcess.stdin.write('q');
       setTimeout(() => {
-        if (ffmpegProcess) {
-          ffmpegProcess.kill('SIGKILL');
+        if (thirdFfmpegProcess) {
+          thirdFfmpegProcess.kill('SIGTERM');
+          setTimeout(() => {
+            if (thirdFfmpegProcess) {
+              thirdFfmpegProcess.kill('SIGKILL');
+            }
+          }, 1000);
         }
-      }, 1000);
+      }, 500);
     } catch (err) {
-      console.error('FFmpeg終了エラー:', err);
+      console.error('3つ目FFmpeg終了エラー:', err);
+      if (thirdFfmpegProcess) {
+        thirdFfmpegProcess.kill('SIGKILL');
+      }
     }
-    ffmpegProcess = null;
+    thirdFfmpegProcess = null;
   }
-
-  // デバイスを変更
-  currentVideoDevice = newDevice;
-
-  // ストリームが有効だった場合は再起動
-  if (wasActive && connectedClients > 0) {
-    setTimeout(() => {
-      console.log('新しいデバイスでFFmpegを再起動します...');
-      startFFmpeg();
-    }, 1500);
-  }
-
-  return currentVideoDevice;
 }
 
 // FFmpegプロセスを起動してカメラからMJPEGストリームを生成
@@ -185,7 +181,7 @@ function startFFmpeg() {
       '-framerate', '30',        // フレームレート
       '-video_size', '1280x720', // 解像度
       '-input_format', 'mjpeg',  // RasPiカメラの入力フォーマット
-      '-i', currentVideoDevice,  // ビデオデバイス
+      '-i', mainVideoDevice,  // ビデオデバイス
       '-c:v', 'mpeg1video',      // ビデオコーデック
       '-f', 'mpegts',            // 出力フォーマット
       '-b:v', '800k',            // ビットレート
@@ -236,31 +232,78 @@ function startFFmpeg() {
   }
 }
 
+// 3つ目のカメラ用FFmpegプロセスを起動
+function startThirdFFmpeg() {
+  try {
+    const ffmpegCmd = 'ffmpeg';
+    const ffmpegArgs = [
+      '-f', 'v4l2',
+      '-framerate', '30',
+      '-video_size', '1280x720',
+      '-input_format', 'mjpeg',
+      '-i', thirdVideoDevice,
+      '-c:v', 'mpeg1video',
+      '-f', 'mpegts',
+      '-b:v', '800k',
+      '-bf', '0',
+      '-g', '30',
+      '-q:v', '5',
+      '-r', '25',
+      '-threads', '2',
+      '-http_persistent', '0',
+      'http://localhost:8082/yoursecret'
+    ];
+
+    console.log('3つ目のカメラFFmpegを起動します:', ffmpegCmd, ffmpegArgs.join(' '));
+
+    thirdFfmpegProcess = spawn(ffmpegCmd, ffmpegArgs, {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    thirdFfmpegProcess.stdout.on('data', (data) => {
+      console.log(`3つ目FFmpeg stdout: ${data}`);
+    });
+
+    thirdFfmpegProcess.stderr.on('data', (data) => {
+      console.error(`3つ目FFmpeg stderr: ${data}`);
+    });
+
+    thirdFfmpegProcess.on('close', (code) => {
+      console.log(`3つ目FFmpegが終了しました (code: ${code})`);
+      thirdFfmpegProcess = null;
+
+      if (code !== 0 && code !== 255 && streamActive) {
+        console.log('3つ目FFmpegを再起動します...');
+        setTimeout(() => {
+          if (streamActive && !thirdFfmpegProcess) {
+            startThirdFFmpeg();
+          }
+        }, 2000);
+      }
+    });
+
+  } catch (err) {
+    console.error('3つ目FFmpeg起動エラー:', err);
+  }
+}
+
 // Socket.io接続ハンドラ
 io.on('connection', (socket) => {
   console.log('クライアントが接続しました:', socket.id);
   connectedClients++;
 
-  // カメラ設定と現在のデバイス情報を送信
-  socket.emit('camera-config', { cameras: enabledCameras });
-  socket.emit('current-device', { device: currentVideoDevice });
-
   // クライアントが1人以上接続していたらストリーミングを開始
   if (connectedClients === 1) {
     startVideoStream();
-    // FFmpegプロセスを起動（既に開始されていなければ）
+    // メインカメラのFFmpegプロセスを起動
     if (!ffmpegProcess) {
       startFFmpeg();
     }
+    // 3つ目のカメラのFFmpegプロセスを起動
+    if (!thirdFfmpegProcess) {
+      startThirdFFmpeg();
+    }
   }
-
-  // デバイス切り替えリクエストの処理
-  socket.on('switch-device', (data) => {
-    console.log('デバイス切り替えリクエストを受信:', data.device);
-    const newDevice = switchVideoDevice(data.device);
-    // 全クライアントに新しいデバイス情報を通知
-    io.emit('current-device', { device: newDevice });
-  });
 
   // クライアント切断時の処理
   socket.on('disconnect', () => {
@@ -370,8 +413,98 @@ function setupWebSocketServer() {
   });
 }
 
+// 3つ目のカメラ用WebSocketサーバーを構築
+function setupThirdWebSocketServer() {
+  const HTTP_PORT = 8082;
+
+  thirdStreamHttpServer = http.createServer((req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    if (req.url === '/yoursecret') {
+      res.writeHead(200, {
+        'Content-Type': 'video/mpeg',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache'
+      });
+
+      req.on('data', (chunk) => {
+        if (thirdWsServer) {
+          for (const client of thirdWsServer.clients) {
+            if (client.readyState === 1) {
+              try {
+                client.send(chunk);
+              } catch (e) {
+                console.error('3つ目カメラ クライアントへの送信に失敗:', e);
+              }
+            }
+          }
+        }
+      });
+
+      req.on('end', () => {
+        console.log('3つ目カメラ FFmpegからのリクエストが終了しました');
+      });
+
+      req.on('error', (err) => {
+        console.error('3つ目カメラ FFmpegリクエストエラー:', err);
+      });
+
+      req.socket.on('close', () => {
+        console.log('3つ目カメラ FFmpeg接続が閉じられました');
+      });
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  }).listen(HTTP_PORT, () => {
+    console.log(`3つ目カメラ Streaming HTTPサーバーが起動しました: http://localhost:${HTTP_PORT}`);
+  });
+
+  thirdWsServer = new WebSocketServer({ server: thirdStreamHttpServer, path: '/yoursecret' });
+
+  thirdWsServer.on('connection', (socket, req) => {
+    console.log('3つ目カメラ WebSocketクライアントが接続しました');
+
+    const url = new URL(req.url, 'http://localhost');
+    const authParam = url.searchParams.get('auth');
+
+    if (!authParam) {
+      console.log('3つ目カメラ 認証情報がありません、接続を切断します');
+      socket.close();
+      return;
+    }
+
+    try {
+      const authDecoded = Buffer.from(authParam, 'base64').toString().split(':');
+      const user = authDecoded[0];
+      const password = authDecoded[1];
+
+      if (user !== 'user' || password !== 'InfoNetworking') {
+        console.log('3つ目カメラ 認証に失敗しました、接続を切断します');
+        socket.close();
+        return;
+      }
+
+      console.log('3つ目カメラ WebSocketクライアントの認証に成功しました');
+    } catch (e) {
+      console.error('3つ目カメラ 認証デコードエラー:', e);
+      socket.close();
+      return;
+    }
+
+    socket.on('close', () => {
+      console.log('3つ目カメラ WebSocketクライアントが切断しました');
+    });
+  });
+}
+
 // WebSocketサーバーのセットアップを実行
 setupWebSocketServer();
+setupThirdWebSocketServer();
 
 // ルートへのアクセス
 app.get('/', (req, res) => {
@@ -425,14 +558,22 @@ server.listen(PORT, () => {
 process.on('SIGINT', () => {
   console.log('サーバーを終了します...');
   stopVideoStream();
-  
+
   if (wsServer) {
     wsServer.close();
   }
-  
+
   if (streamHttpServer) {
     streamHttpServer.close();
   }
-  
+
+  if (thirdWsServer) {
+    thirdWsServer.close();
+  }
+
+  if (thirdStreamHttpServer) {
+    thirdStreamHttpServer.close();
+  }
+
   process.exit();
 });
