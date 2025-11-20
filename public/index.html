@@ -19,8 +19,32 @@
       min-height: 100vh;
     }
     .container {
-      max-width: 800px;
+      max-width: 1200px;
       width: 100%;
+    }
+    .cameras-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 900px) {
+      .cameras-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .camera-section {
+      background-color: white;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .camera-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 10px;
+      text-align: center;
     }
     h1 {
       text-align: center;
@@ -141,23 +165,52 @@
       </div>
     </div>
 
-    <div class="video-container">
-      <div id="loading-overlay" class="overlay loading">サーバーに接続中...</div>
-      <div id="error-overlay" class="overlay error" style="display: none;"></div>
-      <canvas id="camera-stream"></canvas>
-    </div>
-    <div class="status">
-      <div class="status-text">
-        接続状態: <span id="connection-status" class="disconnected">未接続</span>
+    <div class="cameras-grid">
+      <!-- メインカメラ (camera-server) -->
+      <div class="camera-section">
+        <div class="camera-title">メインカメラ (camera-server)</div>
+        <div class="video-container">
+          <div id="loading-overlay" class="overlay loading">サーバーに接続中...</div>
+          <div id="error-overlay" class="overlay error" style="display: none;"></div>
+          <canvas id="camera-stream"></canvas>
+        </div>
+        <div class="status">
+          <div class="status-text">
+            接続状態: <span id="connection-status" class="disconnected">未接続</span>
+          </div>
+          <div class="status-text">
+            現在のデバイス: <span id="current-device">/dev/video2</span>
+          </div>
+        </div>
       </div>
-      <div class="status-text">
-        現在のデバイス: <span id="current-device">/dev/video2</span>
+
+      <!-- レンタルカメラ (rental.camera) -->
+      <div class="camera-section">
+        <div class="camera-title">レンタルカメラ (rental.camera)</div>
+        <div class="video-container">
+          <div id="rental-loading-overlay" class="overlay loading">サーバーに接続中...</div>
+          <div id="rental-error-overlay" class="overlay error" style="display: none;"></div>
+          <canvas id="rental-camera-stream"></canvas>
+        </div>
+        <div class="status">
+          <div class="status-text">
+            接続状態: <span id="rental-connection-status" class="disconnected">未接続</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <script>
     const socket = io();
+    // レンタルサーバーへのsocket.io接続（ストリーム開始トリガー用）
+    const rentalSocket = io('https://rental.camera.mercy-cloud.com', {
+      transports: ['polling', 'websocket'],
+      extraHeaders: {
+        Authorization: 'Basic ' + btoa('infolab:InfoNetworking')
+      },
+      withCredentials: true
+    });
     const cameraStream = document.getElementById('camera-stream');
     const connectionStatus = document.getElementById('connection-status');
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -165,7 +218,14 @@
     const currentDeviceSpan = document.getElementById('current-device');
     const deviceButtonsContainer = document.getElementById('device-buttons');
 
+    // レンタルカメラ用の要素
+    const rentalCameraStream = document.getElementById('rental-camera-stream');
+    const rentalConnectionStatus = document.getElementById('rental-connection-status');
+    const rentalLoadingOverlay = document.getElementById('rental-loading-overlay');
+    const rentalErrorOverlay = document.getElementById('rental-error-overlay');
+
     let player = null;
+    let rentalPlayer = null;
     let cameras = [];
 
     // 動画ストリームの設定
@@ -219,6 +279,63 @@
       loadingOverlay.style.display = 'none';
     }
 
+    // レンタルカメラストリームの設定
+    function setupRentalStream() {
+      try {
+        // 既存のプレーヤーがあれば破棄
+        if (rentalPlayer) {
+          if (typeof rentalPlayer.destroy === 'function') {
+            rentalPlayer.destroy();
+          }
+          rentalPlayer = null;
+        }
+
+        // 新しいプレーヤーを作成
+        const username = 'user';
+        const password = 'InfoNetworking';
+        const auth = btoa(username + ':' + password);
+        const wsUrl = 'wss://rental.camera.mercy-cloud.com/yoursecret?auth=' + auth;
+
+        rentalPlayer = new JSMpeg.Player(wsUrl, {
+          canvas: rentalCameraStream,
+          autoplay: true,
+          audio: false,
+          loop: false,
+          onVideoDecode: function(decoder, time) {
+            rentalLoadingOverlay.style.display = 'none';
+            rentalConnectionStatus.textContent = '接続中';
+            rentalConnectionStatus.className = 'connected';
+          },
+          onSourceEstablished: function() {
+            console.log('レンタルカメラ: ソース接続が確立されました');
+            rentalLoadingOverlay.style.display = 'none';
+            rentalConnectionStatus.textContent = '接続中';
+            rentalConnectionStatus.className = 'connected';
+          },
+          onSourceCompleted: function() {
+            console.log('レンタルカメラ: ソースが完了しました');
+            rentalConnectionStatus.textContent = '未接続';
+            rentalConnectionStatus.className = 'disconnected';
+          },
+          onError: function(err) {
+            console.error('レンタルカメラ JSMpeg Error:', err);
+            showRentalError('レンタルカメラのストリーム読み込みに失敗しました');
+          }
+        });
+      } catch (err) {
+        console.error('レンタルカメラ プレーヤー初期化エラー:', err);
+        showRentalError('レンタルカメラプレーヤーの初期化に失敗しました');
+      }
+    }
+
+    function showRentalError(message) {
+      rentalErrorOverlay.textContent = message;
+      rentalErrorOverlay.style.display = 'flex';
+      rentalLoadingOverlay.style.display = 'none';
+      rentalConnectionStatus.textContent = '未接続';
+      rentalConnectionStatus.className = 'disconnected';
+    }
+
     socket.on('connect', () => {
       connectionStatus.textContent = '接続中';
       connectionStatus.className = 'connected';
@@ -226,6 +343,24 @@
       errorOverlay.style.display = 'none';
       console.log('サーバーに接続しました');
       setupStream();
+    });
+
+    // レンタルサーバー接続イベント
+    rentalSocket.on('connect', () => {
+      console.log('レンタルサーバーに接続しました');
+      rentalLoadingOverlay.style.display = 'none';
+      setupRentalStream();
+    });
+
+    rentalSocket.on('disconnect', () => {
+      console.log('レンタルサーバーから切断されました');
+      rentalConnectionStatus.textContent = '未接続';
+      rentalConnectionStatus.className = 'disconnected';
+    });
+
+    rentalSocket.on('connect_error', (err) => {
+      console.error('レンタルサーバー接続エラー:', err);
+      showRentalError('レンタルサーバーに接続できません');
     });
 
     socket.on('disconnect', () => {

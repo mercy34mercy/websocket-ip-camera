@@ -49,7 +49,13 @@ const basicAuth = (req, res, next) => {
 const app = express();
 
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: ["https://camera-server.mercy-cloud.com", "https://rental.camera.mercy-cloud.com"],
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 // すべてのルートにBasic認証を適用
 app.use(basicAuth);
