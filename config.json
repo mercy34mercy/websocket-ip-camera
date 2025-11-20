@@ -1,0 +1,23 @@
+{
+  "cameras": [
+    {
+      "id": "video0",
+      "name": "400-CAM102",
+      "device": "/dev/video0",
+      "enabled": true
+    },
+    {
+      "id": "video2",
+      "name": "BUFFALO BSW32KM03",
+      "device": "/dev/video2",
+      "enabled": true
+    },
+    {
+      "id": "video4",
+      "name": "HD Pro Webcam C920",
+      "device": "/dev/video4",
+      "enabled": false
+    }
+  ],
+  "defaultCamera": "/dev/video2"
+}

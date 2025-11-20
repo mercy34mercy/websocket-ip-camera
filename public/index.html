@@ -135,16 +135,8 @@
     <div class="controls">
       <div class="control-group">
         <div class="control-label">カメラデバイス</div>
-        <div class="device-buttons">
-          <button class="device-btn" id="video0-btn" data-device="/dev/video0">
-            カメラ 0 (/dev/video0)
-          </button>
-          <button class="device-btn" id="video2-btn" data-device="/dev/video2">
-            カメラ 2 (/dev/video2)
-          </button>
-          <button class="device-btn" id="video4-btn" data-device="/dev/video4">
-            カメラ 4 (/dev/video4)
-          </button>
+        <div class="device-buttons" id="device-buttons">
+          <!-- カメラボタンは動的に生成されます -->
         </div>
       </div>
     </div>
@@ -171,11 +163,10 @@
     const loadingOverlay = document.getElementById('loading-overlay');
     const errorOverlay = document.getElementById('error-overlay');
     const currentDeviceSpan = document.getElementById('current-device');
-    const video0Btn = document.getElementById('video0-btn');
-    const video2Btn = document.getElementById('video2-btn');
-    const video4Btn = document.getElementById('video4-btn');
+    const deviceButtonsContainer = document.getElementById('device-buttons');
 
     let player = null;
+    let cameras = [];
 
     // 動画ストリームの設定
     function setupStream() {
@@ -260,84 +251,66 @@
       setupStream();
     });
 
+    // カメラ設定を受信したときの処理
+    socket.on('camera-config', (data) => {
+      console.log('カメラ設定を受信:', data.cameras);
+      cameras = data.cameras;
+      renderCameraButtons();
+    });
+
     // 現在のデバイス情報を受信したときの処理
     socket.on('current-device', (data) => {
       console.log('現在のデバイス:', data.device);
       updateDeviceUI(data.device);
     });
 
+    // カメラボタンを動的に生成
+    function renderCameraButtons() {
+      deviceButtonsContainer.innerHTML = '';
+
+      cameras.forEach(camera => {
+        const btn = document.createElement('button');
+        btn.className = 'device-btn';
+        btn.id = `${camera.id}-btn`;
+        btn.dataset.device = camera.device;
+        btn.textContent = `${camera.name} (${camera.device})`;
+
+        btn.addEventListener('click', () => {
+          console.log(`${camera.device}に切り替えます`);
+          socket.emit('switch-device', { device: camera.device });
+          loadingOverlay.style.display = 'flex';
+          loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
+
+          // 既存のプレーヤーを破棄
+          if (player && typeof player.destroy === 'function') {
+            player.destroy();
+            player = null;
+          }
+
+          // 少し待ってから再接続
+          setTimeout(() => {
+            setupStream();
+          }, 2000);
+        });
+
+        deviceButtonsContainer.appendChild(btn);
+      });
+    }
+
     // デバイスUIの更新
     function updateDeviceUI(device) {
       currentDeviceSpan.textContent = device;
 
-      // ボタンの状態を更新
-      video0Btn.classList.remove('active');
-      video2Btn.classList.remove('active');
-      video4Btn.classList.remove('active');
-
-      if (device === '/dev/video0') {
-        video0Btn.classList.add('active');
-      } else if (device === '/dev/video2') {
-        video2Btn.classList.add('active');
-      } else if (device === '/dev/video4') {
-        video4Btn.classList.add('active');
-      }
+      // すべてのボタンからactiveを削除
+      const buttons = deviceButtonsContainer.querySelectorAll('.device-btn');
+      buttons.forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.device === device) {
+          btn.classList.add('active');
+        }
+      });
     }
 
-    // デバイス切り替えボタンのイベントリスナー
-    video0Btn.addEventListener('click', () => {
-      console.log('/dev/video0に切り替えます');
-      socket.emit('switch-device', { device: '/dev/video0' });
-      loadingOverlay.style.display = 'flex';
-      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
-
-      // 既存のプレーヤーを破棄
-      if (player && typeof player.destroy === 'function') {
-        player.destroy();
-        player = null;
-      }
-
-      // 少し待ってから再接続
-      setTimeout(() => {
-        setupStream();
-      }, 2000);
-    });
-
-    video2Btn.addEventListener('click', () => {
-      console.log('/dev/video2に切り替えます');
-      socket.emit('switch-device', { device: '/dev/video2' });
-      loadingOverlay.style.display = 'flex';
-      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
-
-      // 既存のプレーヤーを破棄
-      if (player && typeof player.destroy === 'function') {
-        player.destroy();
-        player = null;
-      }
-
-      // 少し待ってから再接続
-      setTimeout(() => {
-        setupStream();
-      }, 2000);
-    });
-
-    video4Btn.addEventListener('click', () => {
-      console.log('/dev/video4に切り替えます');
-      socket.emit('switch-device', { device: '/dev/video4' });
-      loadingOverlay.style.display = 'flex';
-      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
-
-      // 既存のプレーヤーを破棄
-      if (player && typeof player.destroy === 'function') {
-        player.destroy();
-        player = null;
-      }
-
-      // 少し待ってから再接続
-      setTimeout(() => {
-        setupStream();
-      }, 2000);
-    });
   </script>
 </body>
 </html> 

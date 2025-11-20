@@ -5,6 +5,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { WebSocketServer } from 'ws';
+import { readFileSync } from 'node:fs';
+
+// 設定ファイルの読み込み
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const config = JSON.parse(readFileSync(path.join(__dirname, '../config.json'), 'utf-8'));
+const enabledCameras = config.cameras.filter(cam => cam.enabled);
 
 // Basic認証の設定
 const basicAuth = (req, res, next) => {
@@ -36,9 +43,7 @@ const basicAuth = (req, res, next) => {
   }
 };
 
-// ディレクトリパスの設定
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// ディレクトリパスは上部で定義済み
 
 // Expressアプリケーションの作成
 const app = express();
@@ -59,7 +64,7 @@ let streamActive = false;
 let mjpegReqCount = 0;
 let wsServer = null;
 let streamHttpServer = null;
-let currentVideoDevice = '/dev/video2'; // デフォルトのカメラデバイス
+let currentVideoDevice = config.defaultCamera; // デフォルトのカメラデバイス
 
 // FFmpegを使った動画ストリーミングの開始
 function startVideoStream() {
@@ -230,7 +235,8 @@ io.on('connection', (socket) => {
   console.log('クライアントが接続しました:', socket.id);
   connectedClients++;
 
-  // 現在のデバイス情報を送信
+  // カメラ設定と現在のデバイス情報を送信
+  socket.emit('camera-config', { cameras: enabledCameras });
   socket.emit('current-device', { device: currentVideoDevice });
 
   // クライアントが1人以上接続していたらストリーミングを開始
