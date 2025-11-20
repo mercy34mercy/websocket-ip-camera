@@ -59,6 +59,7 @@ let streamActive = false;
 let mjpegReqCount = 0;
 let wsServer = null;
 let streamHttpServer = null;
+let currentVideoDevice = '/dev/video2'; // デフォルトのカメラデバイス
 
 // FFmpegを使った動画ストリーミングの開始
 function startVideoStream() {
@@ -100,10 +101,10 @@ function startVideoStream() {
 
 function stopVideoStream() {
   if (!streamActive) return;
-  
+
   console.log('カメラストリーミングを停止します...');
   streamActive = false;
-  
+
   if (ffmpegProcess) {
     console.log('FFmpegプロセスを終了します...');
     try {
@@ -128,18 +129,53 @@ function stopVideoStream() {
   }
 }
 
+// カメラデバイスを切り替える関数
+function switchVideoDevice(newDevice) {
+  console.log(`カメラデバイスを ${currentVideoDevice} から ${newDevice} に切り替えます...`);
+
+  const wasActive = streamActive;
+
+  // 現在のストリームを停止
+  if (ffmpegProcess) {
+    try {
+      ffmpegProcess.kill('SIGTERM');
+      setTimeout(() => {
+        if (ffmpegProcess) {
+          ffmpegProcess.kill('SIGKILL');
+        }
+      }, 1000);
+    } catch (err) {
+      console.error('FFmpeg終了エラー:', err);
+    }
+    ffmpegProcess = null;
+  }
+
+  // デバイスを変更
+  currentVideoDevice = newDevice;
+
+  // ストリームが有効だった場合は再起動
+  if (wasActive && connectedClients > 0) {
+    setTimeout(() => {
+      console.log('新しいデバイスでFFmpegを再起動します...');
+      startFFmpeg();
+    }, 1500);
+  }
+
+  return currentVideoDevice;
+}
+
 // FFmpegプロセスを起動してカメラからMJPEGストリームを生成
 function startFFmpeg() {
   try {
-    // FFmpegコマンドの構築（macOSの場合）
+    // FFmpegコマンドの構築（Raspberry Piの場合）
     const ffmpegCmd = 'ffmpeg';
     const ffmpegArgs = [
-      '-f', 'avfoundation',      // macOSのカメラフレームワーク
+      '-f', 'v4l2',              // Linuxのビデオ入力フレームワーク
       '-framerate', '30',        // フレームレート
       '-video_size', '1280x720', // 解像度
-      '-pix_fmt', 'uyvy422',     // ピクセルフォーマットを明示的に指定
-      '-i', '0:none',            // カメラデバイス (0:none はビデオのみ)
-      '-c:v', 'mpeg1video',      // ビデオコーデック 
+      '-input_format', 'mjpeg',  // RasPiカメラの入力フォーマット
+      '-i', currentVideoDevice,  // ビデオデバイス
+      '-c:v', 'mpeg1video',      // ビデオコーデック
       '-f', 'mpegts',            // 出力フォーマット
       '-b:v', '800k',            // ビットレート
       '-bf', '0',                // Bフレームなし
@@ -193,7 +229,10 @@ function startFFmpeg() {
 io.on('connection', (socket) => {
   console.log('クライアントが接続しました:', socket.id);
   connectedClients++;
-  
+
+  // 現在のデバイス情報を送信
+  socket.emit('current-device', { device: currentVideoDevice });
+
   // クライアントが1人以上接続していたらストリーミングを開始
   if (connectedClients === 1) {
     startVideoStream();
@@ -202,12 +241,20 @@ io.on('connection', (socket) => {
       startFFmpeg();
     }
   }
-  
+
+  // デバイス切り替えリクエストの処理
+  socket.on('switch-device', (data) => {
+    console.log('デバイス切り替えリクエストを受信:', data.device);
+    const newDevice = switchVideoDevice(data.device);
+    // 全クライアントに新しいデバイス情報を通知
+    io.emit('current-device', { device: newDevice });
+  });
+
   // クライアント切断時の処理
   socket.on('disconnect', () => {
     console.log('クライアントが切断しました:', socket.id);
     connectedClients--;
-    
+
     // 接続中のクライアントがいなくなったらストリーミングを停止
     if (connectedClients === 0) {
       stopVideoStream();

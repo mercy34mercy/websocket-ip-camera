@@ -77,11 +77,78 @@
     .error {
       background-color: rgba(230, 57, 70, 0.7);
     }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      background-color: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      margin-bottom: 20px;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .control-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+    }
+    .device-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .device-btn {
+      flex: 1;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      background-color: white;
+      color: #333;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .device-btn:hover {
+      background-color: #f0f0f0;
+      border-color: #4287f5;
+    }
+    .device-btn.active {
+      background-color: #4287f5;
+      color: white;
+      border-color: #4287f5;
+    }
+    .device-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>サーバーカメラ配信</h1>
+
+    <div class="controls">
+      <div class="control-group">
+        <div class="control-label">カメラデバイス</div>
+        <div class="device-buttons">
+          <button class="device-btn" id="video0-btn" data-device="/dev/video0">
+            カメラ 0 (/dev/video0)
+          </button>
+          <button class="device-btn" id="video2-btn" data-device="/dev/video2">
+            カメラ 2 (/dev/video2)
+          </button>
+          <button class="device-btn" id="video4-btn" data-device="/dev/video4">
+            カメラ 4 (/dev/video4)
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="video-container">
       <div id="loading-overlay" class="overlay loading">サーバーに接続中...</div>
       <div id="error-overlay" class="overlay error" style="display: none;"></div>
@@ -90,6 +157,9 @@
     <div class="status">
       <div class="status-text">
         接続状態: <span id="connection-status" class="disconnected">未接続</span>
+      </div>
+      <div class="status-text">
+        現在のデバイス: <span id="current-device">/dev/video2</span>
       </div>
     </div>
   </div>
@@ -100,7 +170,11 @@
     const connectionStatus = document.getElementById('connection-status');
     const loadingOverlay = document.getElementById('loading-overlay');
     const errorOverlay = document.getElementById('error-overlay');
-    
+    const currentDeviceSpan = document.getElementById('current-device');
+    const video0Btn = document.getElementById('video0-btn');
+    const video2Btn = document.getElementById('video2-btn');
+    const video4Btn = document.getElementById('video4-btn');
+
     let player = null;
 
     // 動画ストリームの設定
@@ -119,7 +193,7 @@
         const username = 'user';
         const password = 'InfoNetworking';
         const auth = btoa(username + ':' + password);
-        const wsUrl = 'ws://localhost:8081/yoursecret?auth=' + auth;
+        const wsUrl = 'wss://camera-server.mercy-cloud.com/yoursecret?auth=' + auth;
         
         player = new JSMpeg.Player(wsUrl, {
           canvas: cameraStream,
@@ -184,6 +258,85 @@
     socket.on('stream-started', (data) => {
       console.log('ストリーミングが開始されました:', data);
       setupStream();
+    });
+
+    // 現在のデバイス情報を受信したときの処理
+    socket.on('current-device', (data) => {
+      console.log('現在のデバイス:', data.device);
+      updateDeviceUI(data.device);
+    });
+
+    // デバイスUIの更新
+    function updateDeviceUI(device) {
+      currentDeviceSpan.textContent = device;
+
+      // ボタンの状態を更新
+      video0Btn.classList.remove('active');
+      video2Btn.classList.remove('active');
+      video4Btn.classList.remove('active');
+
+      if (device === '/dev/video0') {
+        video0Btn.classList.add('active');
+      } else if (device === '/dev/video2') {
+        video2Btn.classList.add('active');
+      } else if (device === '/dev/video4') {
+        video4Btn.classList.add('active');
+      }
+    }
+
+    // デバイス切り替えボタンのイベントリスナー
+    video0Btn.addEventListener('click', () => {
+      console.log('/dev/video0に切り替えます');
+      socket.emit('switch-device', { device: '/dev/video0' });
+      loadingOverlay.style.display = 'flex';
+      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
+
+      // 既存のプレーヤーを破棄
+      if (player && typeof player.destroy === 'function') {
+        player.destroy();
+        player = null;
+      }
+
+      // 少し待ってから再接続
+      setTimeout(() => {
+        setupStream();
+      }, 2000);
+    });
+
+    video2Btn.addEventListener('click', () => {
+      console.log('/dev/video2に切り替えます');
+      socket.emit('switch-device', { device: '/dev/video2' });
+      loadingOverlay.style.display = 'flex';
+      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
+
+      // 既存のプレーヤーを破棄
+      if (player && typeof player.destroy === 'function') {
+        player.destroy();
+        player = null;
+      }
+
+      // 少し待ってから再接続
+      setTimeout(() => {
+        setupStream();
+      }, 2000);
+    });
+
+    video4Btn.addEventListener('click', () => {
+      console.log('/dev/video4に切り替えます');
+      socket.emit('switch-device', { device: '/dev/video4' });
+      loadingOverlay.style.display = 'flex';
+      loadingOverlay.textContent = 'カメラデバイスを切り替えています...';
+
+      // 既存のプレーヤーを破棄
+      if (player && typeof player.destroy === 'function') {
+        player.destroy();
+        player = null;
+      }
+
+      // 少し待ってから再接続
+      setTimeout(() => {
+        setupStream();
+      }, 2000);
     });
   </script>
 </body>
